@@ -27,7 +27,8 @@ function validateHostname(value) {
   const host = String(value || '').trim().toLowerCase().replace(/\.$/, '');
   if (!host) return '';
   if (host.length > 253 || !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host)) fail('Enter a valid hostname.');
-  if (host === config.baseDomain || host.endsWith(`.${config.baseDomain}`) || host === 'localhost' || host.endsWith('.localhost')) return host;
+  if (host === config.baseDomain || host === `www.${config.baseDomain}`) fail('The base domain is reserved for the public project directory.');
+  if (host.endsWith(`.${config.baseDomain}`) || host === 'localhost' || host.endsWith('.localhost')) return host;
   fail(`Hostname must be under ${config.baseDomain} or localhost for local testing.`);
 }
 
@@ -85,4 +86,25 @@ function validateHealthPath(value) {
   return route;
 }
 
-module.exports = { fail, slugify, validateSlug, validateName, validateHostname, validateGitUrl, parseCommand, safeAppPath, safeEnv, validateHealthPath };
+function validateDescription(value) {
+  const description = String(value || '').trim();
+  if (description.length > 1200 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(description)) fail('Project description must be under 1,200 characters and cannot contain control characters.');
+  return description;
+}
+
+function validateYoutubeUrl(value) {
+  const input = String(value || '').trim();
+  if (!input) return '';
+  let url;
+  try { url = new URL(input); } catch { fail('Enter a valid YouTube video URL.'); }
+  const host = url.hostname.toLowerCase().replace(/^www\./, '');
+  if (url.protocol !== 'https:' || url.username || url.password || !['youtube.com', 'm.youtube.com', 'youtu.be', 'youtube-nocookie.com'].includes(host)) fail('Enter an HTTPS YouTube video link.');
+  let id = '';
+  if (host === 'youtu.be') id = url.pathname.split('/').filter(Boolean)[0] || '';
+  else if (url.pathname === '/watch') id = url.searchParams.get('v') || '';
+  else if (/^\/(?:embed|shorts|live)\//.test(url.pathname)) id = url.pathname.split('/')[2] || '';
+  if (!/^[A-Za-z0-9_-]{6,20}$/.test(id)) fail('That URL does not contain a supported YouTube video ID.');
+  return `https://www.youtube.com/watch?v=${id}`;
+}
+
+module.exports = { fail, slugify, validateSlug, validateName, validateHostname, validateGitUrl, parseCommand, safeAppPath, safeEnv, validateHealthPath, validateDescription, validateYoutubeUrl };

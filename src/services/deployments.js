@@ -8,7 +8,7 @@ const config = require('../config');
 const store = require('./store');
 const capabilities = require('./capabilities');
 const manager = require('../process-manager/manager');
-const { validateSlug, validateName, validateHostname, validateGitUrl, safeAppPath, safeEnv, validateHealthPath, parseCommand, fail } = require('../security/validation');
+const { validateSlug, validateName, validateHostname, validateGitUrl, safeAppPath, safeEnv, validateHealthPath, validateDescription, validateYoutubeUrl, parseCommand, fail } = require('../security/validation');
 const { extractZip } = require('../security/zip');
 
 const activeDeployments = new Set();
@@ -41,6 +41,9 @@ async function createProject(input = {}) {
   const project = {
     id: `${slug}-${Date.now().toString(36)}`,
     slug, name, hostname,
+    description: validateDescription(input.description),
+    youtubeUrl: validateYoutubeUrl(input.youtubeUrl),
+    isPublic: input.isPublic !== false && input.isPublic !== 'false',
     runtime: autodetected.runtime,
     framework: input.framework || autodetected.framework,
     buildCommand: input.buildCommand === undefined ? autodetected.buildCommand : String(input.buildCommand),
@@ -85,6 +88,9 @@ async function updateProject(slug, input = {}) {
     ...current,
     name: newName,
     hostname: newHost,
+    description: input.description === undefined ? (current.description || '') : validateDescription(input.description),
+    youtubeUrl: input.youtubeUrl === undefined ? (current.youtubeUrl || '') : validateYoutubeUrl(input.youtubeUrl),
+    isPublic: input.isPublic === undefined ? current.isPublic !== false : input.isPublic === true || input.isPublic === 'true' || input.isPublic === 'on',
     runtime: input.runtime === undefined ? current.runtime : String(input.runtime),
     framework: input.framework === undefined ? current.framework : String(input.framework),
     buildCommand: input.buildCommand === undefined ? current.buildCommand : String(input.buildCommand),

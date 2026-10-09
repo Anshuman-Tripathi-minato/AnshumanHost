@@ -14,6 +14,7 @@ module.exports = {
   logRoot: path.join(root, 'logs'),
   backupRoot: path.join(root, 'backups'),
   publicRoot: path.join(root, 'public'),
+  showcaseRoot: path.join(root, 'public-showcase'),
   portStart: Number(process.env.ANSHUMANHOST_APP_PORT_START || 3100),
   portEnd: Number(process.env.ANSHUMANHOST_APP_PORT_END || 3999),
   baseDomain: (process.env.ANSHUMANHOST_BASE_DOMAIN || 'anshuman.online').toLowerCase(),

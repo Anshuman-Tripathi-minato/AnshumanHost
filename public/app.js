@@ -41,12 +41,23 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&':
 const state = { projects: [], overview: null, capabilities: null, deployments: [], page: 'dashboard', query: '', projectFilter: 'all', source: 'git', selectedLogProject: '', currentProject: null, backups: [], busy: false };
 
 async function api(route, options = {}) {
-  const response = await fetch(route, { ...options, headers: { ...(options.body && !(options.body instanceof ArrayBuffer) && !(options.body instanceof Blob) ? { 'content-type': 'application/json' } : {}), ...(options.headers || {}) } });
+  const response = await fetch(route, { credentials: 'same-origin', ...options, headers: { ...(options.body && !(options.body instanceof ArrayBuffer) && !(options.body instanceof Blob) ? { 'content-type': 'application/json' } : {}), ...(options.headers || {}) } });
   let result;
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) result = await response.json(); else result = await response.text();
   if (!response.ok) throw new Error(result?.error || result || `Request failed (${response.status}).`);
   return result;
+}
+
+function renderAuthGate(configured) {
+  document.body.classList.add('auth-locked');
+  const title = configured ? 'Sign in to your control room' : 'Set your admin password';
+  const subtitle = configured
+    ? 'Project operations and deployment data are available only after administrator sign-in.'
+    : 'Create a password for this local admin panel. Initial setup is accepted only from this device.';
+  const action = configured ? 'Sign in' : 'Save password and continue';
+  main.innerHTML = `<section class="auth-card"><div class="auth-brand"><svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true"><path d="M40 13c-5-7-17-8-25-3C6 16 4 27 9 34c4 6 13 8 20 4 7-4 10-12 7-18-2-4-7-6-11-4-4 1-6 5-5 8 1 2 4 3 6 2 2-1 3-3 2-4"/><path d="M7 37c8-4 12-9 14-15M30 9c3-3 7-4 11-3-1 4-3 7-7 9"/></svg><span class="brand-copy"><strong>Anshuman<span>Host</span></strong><small>PRIVATE CONTROL PLANE</small></span></div><p class="eyebrow">ADMIN ACCESS</p><h1>${title}</h1><p class="page-subtitle">${subtitle}</p><form id="authForm" data-mode="${configured ? 'login' : 'setup'}"><div class="form-field"><label for="adminPassword">${configured ? 'Admin password' : 'Create password'}</label><input class="input" id="adminPassword" name="password" type="password" minlength="14" maxlength="256" autocomplete="${configured ? 'current-password' : 'new-password'}" required autofocus></div>${configured ? '' : '<div class="form-field"><label for="confirmAdminPassword">Confirm password</label><input class="input" id="confirmAdminPassword" name="confirmPassword" type="password" minlength="14" maxlength="256" autocomplete="new-password" required><small>Use at least 14 characters.</small></div>'}<p class="auth-error" id="authError" role="alert"></p><button class="button button-primary" type="submit">${action}</button></form></section>`;
+  document.querySelector('#adminPassword')?.focus();
 }
 
 async function refresh() {
@@ -167,6 +178,9 @@ function renderDeploy() {
     <form id="deployForm" class="panel content-panel"><h2>Project details</h2><p class="page-subtitle">Project names and URLs are persisted locally. Deployment runs as a separate process under your current OS account.</p><div class="form-grid" style="margin-top:16px">
       <div class="form-field"><label for="projectName">Project name</label><input class="input" id="projectName" name="name" required maxlength="80" placeholder="E-Chat"></div>
       <div class="form-field"><label for="projectSlug">Unique slug</label><input class="input" id="projectSlug" name="slug" required pattern="[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?" placeholder="e-chat"><small>Lowercase letters, numbers and interior hyphens.</small></div>
+      <div class="form-field full"><label for="projectDescription">Public project description</label><textarea class="textarea" id="projectDescription" name="description" maxlength="1200" placeholder="What does this project do? Who is it for?"></textarea><small>This appears on the public project directory when the project is live and listed.</small></div>
+      <div class="form-field full"><label for="projectYoutube">YouTube overview link <span class="dim">(optional)</span></label><input class="input" id="projectYoutube" name="youtubeUrl" type="url" placeholder="https://youtu.be/…"><small>Only YouTube video links are accepted. Visitors open the video on YouTube.</small></div>
+      <div class="form-field full"><label class="checkbox-row" for="projectPublic"><input id="projectPublic" name="isPublic" type="checkbox" checked><span>List this project on the public AnshumanHost site after it is running</span></label></div>
       <div class="form-field"><label for="projectHostname">Hostname</label><input class="input" id="projectHostname" name="hostname" placeholder="e-chat.anshuman.online"><small>Defaults to a hostname under ${esc(state.capabilities?.baseDomain || 'anshuman.online')}. This local proxy does not configure public DNS.</small></div>
       <div class="form-field"><label for="runtime">Runtime</label><select class="select" id="runtime" name="runtime"><option value="" selected>Auto-detect from source</option>${runtimeOptions('')}</select><small>Review the detected runtime after import. Node.js, Python (when installed), and static sites have native adapters.</small></div>
       <div class="form-field"><label for="framework">Framework / label</label><input class="input" id="framework" name="framework" placeholder="Auto-detect after source import"></div>
@@ -190,14 +204,14 @@ function renderDetails(project) {
   main.innerHTML = `<div class="page-stack">${pageHeading('PROJECT DETAIL', project.name, `Manage ${project.slug} · ${project.framework || project.runtime}`, `<button class="button" data-action="logs" data-slug="${esc(project.slug)}">${icon('file')} View logs</button>`)}
     <div class="details-grid"><section class="panel content-panel"><div class="panel-header"><div><h2>Deployment state</h2><p class="page-subtitle">Status and uptime are read from the process manager.</p></div><div style="margin-left:auto">${statusPill(project.status)}</div></div><div class="details-actions" style="margin-top:16px">${actionButtons}<button class="button button-danger" data-action="delete" data-slug="${esc(project.slug)}">${icon('trash')} Delete project</button></div><dl class="detail-list"><dt>Runtime</dt><dd>${esc(project.runtime)} · ${esc(project.framework || 'Custom')}</dd><dt>Hostname</dt><dd>${esc(project.hostname || 'Not assigned')}</dd><dt>Local port</dt><dd>${project.port || 'Unassigned'}</dd><dt>Source directory</dt><dd><span class="inline-code">${esc(project.sourcePath)}</span></dd><dt>Health check</dt><dd><span class="inline-code">${esc(project.healthPath)}</span></dd><dt>Last error</dt><dd class="${project.status === 'failed' ? 'warning-text' : ''}">${esc(project.lastError || 'No deployment error recorded.')}</dd><dt>Environment keys</dt><dd>${(project.envKeys || []).length ? project.envKeys.map((key) => `<span class="tag">${esc(key)}</span>`).join(' ') : 'No project environment variables configured.'}</dd></dl></section>
     <section class="panel content-panel"><h2>Source and process</h2><p class="page-subtitle">The dashboard does not expose an arbitrary shell to the browser.</p><div class="notice">${icon('info')} Runtime support is reported per host. Container-only deployment is disabled until a compatible adapter is enabled.</div><button class="button" data-nav="system" style="margin-top:13px">${icon('monitor')} View host capabilities</button></section></div>
-    <section class="panel content-panel"><h2>Configuration</h2><p class="page-subtitle">Secret values are never returned by the API. To replace environment values, enter the complete new set.</p><form id="projectConfigForm" data-slug="${esc(project.slug)}"><div class="form-grid" style="margin-top:15px"><div class="form-field"><label for="detailName">Project name</label><input class="input" id="detailName" name="name" value="${esc(project.name)}" required></div><div class="form-field"><label for="detailHostname">Hostname</label><input class="input" id="detailHostname" name="hostname" value="${esc(project.hostname || '')}" placeholder="project.anshuman.online"></div><div class="form-field"><label for="detailRuntime">Runtime adapter</label><select class="select" id="detailRuntime" name="runtime">${runtimeOptions(project.runtime)}</select></div><div class="form-field"><label for="detailFramework">Framework / label</label><input class="input" id="detailFramework" name="framework" value="${esc(project.framework || '')}"></div><div class="form-field full"><label for="detailBuild">Build command</label><input class="input" id="detailBuild" name="buildCommand" value="${esc(project.buildCommand || '')}" placeholder="npm run build"></div><div class="form-field full"><label for="detailStart">Start command</label><input class="input" id="detailStart" name="startCommand" value="${esc(project.startCommand || '')}" placeholder="npm start"></div><div class="form-field"><label for="detailHealth">Health check path</label><input class="input" id="detailHealth" name="healthPath" value="${esc(project.healthPath || '/')}"></div><div class="form-field"><label class="checkbox-row" for="replaceEnv"><input type="checkbox" id="replaceEnv"> Replace environment variables</label><small>Existing values are not shown. Check this to submit a complete replacement set.</small></div><div class="form-field full"><label for="detailEnv">Environment variables</label><textarea class="textarea" id="detailEnv" placeholder="API_TOKEN=...&#10;DATABASE_URL=..." disabled></textarea><small>One KEY=value per line. Values are stored in a private local file and redacted from logs.</small></div></div><div class="form-actions"><button class="button button-primary" type="submit">${icon('check')} Save configuration</button></div></form></section></div>`;
+    <section class="panel content-panel"><h2>Configuration</h2><p class="page-subtitle">Update operational settings and the public project page. Secret values are never returned by the API.</p><form id="projectConfigForm" data-slug="${esc(project.slug)}"><div class="form-grid" style="margin-top:15px"><div class="form-field"><label for="detailName">Project name</label><input class="input" id="detailName" name="name" value="${esc(project.name)}" required></div><div class="form-field"><label for="detailHostname">Hostname</label><input class="input" id="detailHostname" name="hostname" value="${esc(project.hostname || '')}" placeholder="project.anshuman.online"></div><div class="form-field"><label for="detailRuntime">Runtime adapter</label><select class="select" id="detailRuntime" name="runtime">${runtimeOptions(project.runtime)}</select></div><div class="form-field"><label for="detailFramework">Framework / label</label><input class="input" id="detailFramework" name="framework" value="${esc(project.framework || '')}"></div><div class="form-field full"><label for="detailDescription">Public project description</label><textarea class="textarea" id="detailDescription" name="description" maxlength="1200" placeholder="What does this project do? Who is it for?">${esc(project.description || '')}</textarea><small>Shown on the public project page. It will be hidden from the directory when this project is stopped.</small></div><div class="form-field full"><label for="detailYoutube">YouTube overview link <span class="dim">(optional)</span></label><input class="input" id="detailYoutube" name="youtubeUrl" type="url" value="${esc(project.youtubeUrl || '')}" placeholder="https://youtu.be/…"><small>Only YouTube video links are accepted; visitors open the video directly on YouTube.</small></div><div class="form-field full"><label class="checkbox-row" for="detailPublic"><input type="checkbox" id="detailPublic" name="isPublic" ${project.isPublic === false ? '' : 'checked'}><span>List this project publicly when it is running</span></label></div><div class="form-field full"><label for="detailBuild">Build command</label><input class="input" id="detailBuild" name="buildCommand" value="${esc(project.buildCommand || '')}" placeholder="npm run build"></div><div class="form-field full"><label for="detailStart">Start command</label><input class="input" id="detailStart" name="startCommand" value="${esc(project.startCommand || '')}" placeholder="npm start"></div><div class="form-field"><label for="detailHealth">Health check path</label><input class="input" id="detailHealth" name="healthPath" value="${esc(project.healthPath || '/')}"></div><div class="form-field"><label class="checkbox-row" for="replaceEnv"><input type="checkbox" id="replaceEnv"> Replace environment variables</label><small>Existing values are not shown. Check this to submit a complete replacement set.</small></div><div class="form-field full"><label for="detailEnv">Environment variables</label><textarea class="textarea" id="detailEnv" placeholder="API_TOKEN=...&#10;DATABASE_URL=..." disabled></textarea><small>One KEY=value per line. Values are stored in a private local file and redacted from logs.</small></div></div><div class="form-actions"><button class="button button-primary" type="submit">${icon('check')} Save configuration</button></div></form></section></div>`;
 }
 
 async function renderDomains() {
   const domains = await api('/api/domains');
   const rows = domains.projects.length ? `<div class="table-responsive"><table class="table-list"><thead><tr><th>Hostname</th><th>Project</th><th>State</th><th>Local port</th><th>Actions</th></tr></thead><tbody>${domains.projects.map((p) => `<tr><td><span class="inline-code">${esc(p.hostname || 'Unassigned')}</span></td><td>${esc(p.name)}</td><td>${statusPill(p.status)}</td><td>${p.port || '—'}</td><td><button class="button button-small" data-action="edit-host" data-slug="${esc(p.slug)}">Edit hostname</button> <button class="button button-small" data-action="copy-proxy" data-host="${esc(p.hostname || '')}">Copy test command</button></td></tr>`).join('')}</tbody></table></div>` : emptyProjects();
-  main.innerHTML = `<div class="page-stack">${pageHeading('ROUTING', 'Domains', 'The local proxy only routes registered hostnames to running project ports.')}
-    <section class="panel content-panel"><div class="panel-header"><div><h2>Reverse proxy</h2><p class="page-subtitle">Loopback listener · HTTP · WebSocket upgrades enabled</p></div><span class="tag" style="margin-left:auto">${esc(domains.proxyUrl)}</span></div><div class="notice">${icon('alert')} Public access is not configured. DNS records, HTTPS termination, and a Cloudflare Tunnel or equivalent are separate manual steps. The dashboard itself is not routed by this proxy.</div></section>
+  main.innerHTML = `<div class="page-stack">${pageHeading('ROUTING', 'Domains', 'The local proxy serves the public project directory and routes registered app hostnames.', '<a class="button" href="http://127.0.0.1:8780/" target="_blank" rel="noopener noreferrer">Preview public directory</a>')}
+    <section class="panel content-panel"><div class="panel-header"><div><h2>Reverse proxy</h2><p class="page-subtitle">Loopback listener · HTTP · WebSocket upgrades enabled</p></div><span class="tag" style="margin-left:auto">${esc(domains.proxyUrl)}</span></div><div class="notice">${icon('info')} ${esc(domains.baseDomain)} serves the public project directory. Configure your DNS and HTTPS tunnel to send the base domain and project subdomains to this proxy. Keep the admin dashboard on port 3000 private.</div></section>
     <section class="panel content-panel"><h2>Project hostnames</h2><p class="page-subtitle">Use the copy action to test routing locally with a Host header.</p>${rows}</section><section class="panel content-panel"><h2>Local routing test</h2><p class="page-subtitle">The host does not need public DNS for a local proxy test.</p><pre class="terminal-banner">curl -H 'Host: ${esc(domains.projects.find((p) => p.hostname)?.hostname || 'project.anshuman.online')}' http://127.0.0.1:8780/</pre></section></div>`;
 }
 
@@ -229,7 +243,8 @@ function renderSettings() {
   const config = state.capabilities;
   main.innerHTML = `<div class="page-stack">${pageHeading('CONTROL PLANE', 'Settings', 'Host configuration and local data protection.')}
     <div class="settings-split"><nav class="panel settings-nav" aria-label="Settings sections"><a href="#settings">General</a><a href="#system">Runtime capabilities</a><a href="#backups">Backups</a><a href="#domains">Domain routing</a></nav>
-    <section class="panel content-panel"><h2>Local host configuration</h2><p class="page-subtitle">Values below are discovered from the current process environment and host; this dashboard does not invent usage data.</p><dl class="detail-list"><dt>Platform</dt><dd>${esc(config?.host.platform || 'Loading')}</dd><dt>Node runtime</dt><dd>${esc(config?.host.node || 'Loading')}</dd><dt>Project port range</dt><dd>3100–3999</dd><dt>Project source root</dt><dd><span class="inline-code">apps/</span></dd><dt>Metadata root</dt><dd><span class="inline-code">data/</span></dd><dt>Base domain</dt><dd>${esc(config?.baseDomain || 'anshuman.online')} (from ANSHUMANHOST_BASE_DOMAIN)</dd></dl><div class="notice">${icon('alert')} Dashboard binds to 127.0.0.1 by default. Do not expose port 3000 through a public reverse proxy. Environment variables and secrets are stored locally in <span class="inline-code">data/secrets.json</span> with restrictive file permissions where supported.</div><div class="form-actions"><button class="button" data-nav="system">${icon('monitor')} View capabilities</button><button class="button" data-nav="backups">${icon('database')} Manage backups</button></div></section></div></div>`;
+    <section class="panel content-panel"><h2>Local host configuration</h2><p class="page-subtitle">Values below are discovered from the current process environment and host; this dashboard does not invent usage data.</p><dl class="detail-list"><dt>Platform</dt><dd>${esc(config?.host.platform || 'Loading')}</dd><dt>Node runtime</dt><dd>${esc(config?.host.node || 'Loading')}</dd><dt>Project port range</dt><dd>3100–3999</dd><dt>Project source root</dt><dd><span class="inline-code">apps/</span></dd><dt>Metadata root</dt><dd><span class="inline-code">data/</span></dd><dt>Base domain</dt><dd><a class="text-button" href="https://${esc(config?.baseDomain || 'anshuman.online')}" target="_blank" rel="noopener noreferrer">https://${esc(config?.baseDomain || 'anshuman.online')}</a></dd><dt>Public router</dt><dd><span class="inline-code">127.0.0.1:8780</span></dd></dl><div class="notice">${icon('info')} The public directory and project subdomains use the app proxy. The admin dashboard stays on its private loopback listener; do not route port 3000 publicly. Secret values remain in local files with restrictive permissions where supported.</div><div class="form-actions"><button class="button" data-nav="system">${icon('monitor')} View capabilities</button><button class="button" data-nav="backups">${icon('database')} Manage backups</button></div></section></div>
+    <section class="panel content-panel"><h2>Change admin password</h2><p class="page-subtitle">The password is stored as a salted hash in the ignored local data directory. This also signs in the current browser again.</p><form id="changePasswordForm" class="password-form"><div class="form-grid" style="margin-top:15px"><div class="form-field full"><label for="currentAdminPassword">Current password</label><input class="input" id="currentAdminPassword" name="currentPassword" type="password" autocomplete="current-password" required></div><div class="form-field"><label for="newAdminPassword">New password</label><input class="input" id="newAdminPassword" name="newPassword" type="password" minlength="14" maxlength="256" autocomplete="new-password" required><small>At least 14 characters.</small></div><div class="form-field"><label for="confirmNewAdminPassword">Confirm new password</label><input class="input" id="confirmNewAdminPassword" name="confirmPassword" type="password" minlength="14" maxlength="256" autocomplete="new-password" required></div></div><div class="form-actions"><button class="button button-primary" type="submit">${icon('check')} Update password</button></div></form></section></div>`;
 }
 
 async function renderBackups() {
@@ -317,8 +332,10 @@ document.addEventListener('click', async (event) => {
   if (source) {
     const previous = document.querySelector('#deployForm');
     const values = previous ? Object.fromEntries(new FormData(previous).entries()) : {};
+    const publicEnabled = previous?.querySelector('#projectPublic')?.checked ?? true;
     state.source = source.dataset.source; renderDeploy();
-    for (const [name, value] of Object.entries(values)) { const field = document.querySelector(`#deployForm [name="${CSS.escape(name)}"]`); if (field && field.type !== 'file') field.value = value; }
+    for (const [name, value] of Object.entries(values)) { const field = document.querySelector(`#deployForm [name="${CSS.escape(name)}"]`); if (field && field.type !== 'file' && field.type !== 'checkbox') field.value = value; }
+    const publicCheckbox = document.querySelector('#projectPublic'); if (publicCheckbox) publicCheckbox.checked = publicEnabled;
     return;
   }
   const actionButton = event.target.closest('[data-action]');
@@ -358,6 +375,31 @@ document.addEventListener('change', (event) => {
 });
 
 document.addEventListener('submit', async (event) => {
+  if (event.target.id === 'authForm') {
+    event.preventDefault();
+    const form = event.target;
+    const password = form.querySelector('[name="password"]').value;
+    const mode = form.dataset.mode;
+    const error = document.querySelector('#authError');
+    if (mode === 'setup' && password !== form.querySelector('[name="confirmPassword"]').value) { error.textContent = 'The passwords do not match.'; return; }
+    const button = form.querySelector('[type="submit"]'); const restore = setBusy(button, mode === 'setup' ? 'Saving…' : 'Signing in…');
+    try {
+      await api(mode === 'setup' ? '/api/auth/setup' : '/api/auth/login', { method: 'POST', body: JSON.stringify({ password }) });
+      form.reset();
+      await init();
+    } catch (requestError) { error.textContent = requestError.message; }
+    finally { restore(); }
+  }
+  if (event.target.id === 'changePasswordForm') {
+    event.preventDefault();
+    const form = event.target;
+    const values = Object.fromEntries(new FormData(form).entries());
+    if (values.newPassword !== values.confirmPassword) { showToast('The new passwords do not match.', 'error'); return; }
+    const restore = setBusy(form.querySelector('[type="submit"]'), 'Updating…');
+    try { await api('/api/auth/change-password', { method: 'POST', body: JSON.stringify(values) }); form.reset(); showToast('Admin password updated.'); }
+    catch (error) { showToast(error.message, 'error'); }
+    finally { restore(); }
+  }
   if (event.target.id === 'deployForm') { event.preventDefault(); await createProject(event.target); }
   if (event.target.id === 'projectConfigForm') { event.preventDefault(); await saveProjectConfig(event.target); }
 });
@@ -367,6 +409,10 @@ document.querySelector('#primaryNav').addEventListener('click', (event) => {
   event.preventDefault(); navigate(link.dataset.page);
 });
 document.querySelector('#notificationsButton').addEventListener('click', () => navigate('logs'));
+document.querySelector('#signOutButton').addEventListener('click', async () => {
+  try { await api('/api/auth/logout', { method: 'POST', body: '{}' }); await init(); }
+  catch (error) { showToast(error.message, 'error'); }
+});
 mobileMenu.addEventListener('click', () => { const open = !sidebar.classList.contains('open'); sidebar.classList.toggle('open', open); sidebarScrim.classList.toggle('visible', open); mobileMenu.setAttribute('aria-expanded', String(open)); });
 sidebarScrim.addEventListener('click', closeMobileNav);
 document.querySelector('#globalSearch').addEventListener('keydown', (event) => { if (event.key === 'Enter') { navigate('projects'); setTimeout(() => { const input = document.querySelector('#projectSearch'); if (input) { input.value = state.query; input.focus(); } }, 0); } });
@@ -434,6 +480,7 @@ async function confirmStopped(slug) {
 async function createProject(form) {
   const button = form.querySelector('[type="submit"]'); const restore = setBusy(button, 'Creating…');
   const values = Object.fromEntries(new FormData(form).entries());
+  values.isPublic = Boolean(form.querySelector('#projectPublic')?.checked);
   values.buildCommand ||= ''; values.startCommand ||= '';
   try {
     if (state.source === 'git' && !form.querySelector('#gitUrl')?.value.trim()) throw new Error('Enter an HTTPS Git repository URL.');
@@ -463,6 +510,7 @@ async function createProject(form) {
 async function saveProjectConfig(form) {
   const slug = form.dataset.slug; const restore = setBusy(form.querySelector('[type="submit"]'), 'Saving…');
   const values = Object.fromEntries(new FormData(form).entries());
+  values.isPublic = Boolean(form.querySelector('#detailPublic')?.checked);
   if (form.querySelector('#replaceEnv')?.checked) {
     try { values.env = parseEnv(form.querySelector('#detailEnv').value); }
     catch (error) { restore(); showToast(error.message, 'error'); return; }
@@ -473,7 +521,12 @@ async function saveProjectConfig(form) {
 }
 
 async function init() {
-  try { await refresh(); const shortcut = document.querySelector('.global-search kbd'); if (shortcut) shortcut.textContent = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K'; routeFromHash(); }
+  try {
+    const session = await api('/api/auth/session');
+    if (!session.configured || !session.authenticated) { renderAuthGate(session.configured); return; }
+    document.body.classList.remove('auth-locked');
+    await refresh(); const shortcut = document.querySelector('.global-search kbd'); if (shortcut) shortcut.textContent = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K'; routeFromHash();
+  }
   catch (error) { main.innerHTML = `<section class="panel content-panel"><p class="eyebrow">CONTROL PLANE UNAVAILABLE</p><h1>Could not connect to AnshumanHost</h1><p class="page-subtitle">${esc(error.message)}</p><p class="page-subtitle">Start the dashboard with <span class="inline-code">npm start</span> and keep it bound to 127.0.0.1.</p><button class="button button-primary" data-action="retry">${icon('refresh')} Retry connection</button></section>`; }
 }
 

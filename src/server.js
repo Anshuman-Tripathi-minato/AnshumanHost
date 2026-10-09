@@ -8,6 +8,7 @@ const config = require('./config');
 const store = require('./services/store');
 const service = require('./services/deployments');
 const capabilities = require('./services/capabilities');
+const auth = require('./services/auth');
 const manager = require('./process-manager/manager');
 const { createProxyServer } = require('./reverse-proxy/server');
 const { validateSlug } = require('./security/validation');
@@ -45,10 +46,12 @@ async function bodyOf(req, limit = 2 * 1024 * 1024) {
 function checkBrowserRequest(req) {
   if (req.headers['sec-fetch-site'] === 'cross-site') fail('Cross-site dashboard requests are blocked.', 403);
   const origin = req.headers.origin;
-  if (!origin) return;
+  if (!origin) fail('Dashboard changes must be submitted from the signed-in browser.', 403);
   let parsed;
   try { parsed = new URL(origin); } catch { fail('Request origin is invalid.', 403); }
-  if (parsed.protocol !== 'http:' || parsed.host !== req.headers.host || !['127.0.0.1', 'localhost'].includes(parsed.hostname)) fail('Dashboard API accepts same-origin local requests only.', 403);
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const requestProtocol = forwardedProto ? `${forwardedProto}:` : req.socket.encrypted ? 'https:' : 'http:';
+  if (parsed.protocol !== requestProtocol || parsed.host !== req.headers.host) fail('Dashboard API accepts same-origin requests only.', 403);
 }
 
 async function publicProjects() {
@@ -65,6 +68,54 @@ async function dispatch(req, res) {
   if (!pathname.startsWith('/api/')) return false;
   if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) checkBrowserRequest(req);
   if (req.method === 'OPTIONS') { res.writeHead(204, { allow: 'GET,HEAD,POST,PUT,DELETE,OPTIONS' }); res.end(); return true; }
+
+  if (pathname === '/api/auth/session' && req.method === 'GET') {
+    const record = await auth.readRecord();
+    sendJson(res, 200, { configured: Boolean(record), authenticated: auth.isAuthenticated(req, record) });
+    return true;
+  }
+  if (pathname === '/api/auth/setup' && req.method === 'POST') {
+    if (!auth.isLoopback(req)) fail('Initial administrator setup is available only from this device.', 403);
+    if (await auth.readRecord()) fail('Administrator password is already configured.', 409);
+    const body = await bodyOf(req);
+    const record = await auth.setPassword(body.password);
+    auth.setSession(req, res, record);
+    sendJson(res, 201, { authenticated: true });
+    return true;
+  }
+  if (pathname === '/api/auth/login' && req.method === 'POST') {
+    const record = await auth.readRecord();
+    if (!record) fail('Set the administrator password on the host device first.', 409);
+    if (!auth.allowAttempt(req)) fail('Too many sign-in attempts. Wait 15 minutes, then try again.', 429);
+    const body = await bodyOf(req);
+    if (!await auth.verifyPassword(body.password, record)) {
+      auth.failedAttempt(req);
+      fail('Password is incorrect.', 401);
+    }
+    auth.clearAttempts(req);
+    auth.setSession(req, res, record);
+    sendJson(res, 200, { authenticated: true });
+    return true;
+  }
+  if (pathname === '/api/auth/logout' && req.method === 'POST') {
+    auth.clearSession(req, res);
+    sendJson(res, 200, { authenticated: false });
+    return true;
+  }
+
+  if (pathname.startsWith('/api/')) {
+    const record = await auth.readRecord();
+    if (!record || !auth.isAuthenticated(req, record)) fail('Sign in to the AnshumanHost admin panel first.', 401);
+  }
+  if (pathname === '/api/auth/change-password' && req.method === 'POST') {
+    const record = await auth.readRecord();
+    const body = await bodyOf(req);
+    if (!await auth.verifyPassword(body.currentPassword, record)) fail('Current password is incorrect.', 401);
+    const next = await auth.setPassword(body.newPassword);
+    auth.setSession(req, res, next);
+    sendJson(res, 200, { changed: true });
+    return true;
+  }
 
   if (req.method === 'GET' && pathname === '/api/health') { sendJson(res, 200, { ok: true, name: 'AnshumanHost', dashboard: `http://${config.host}:${config.port}`, proxy: `http://${config.proxyHost}:${config.proxyPort}` }); return true; }
   if (req.method === 'GET' && pathname === '/api/capabilities') { sendJson(res, 200, capabilities.discover()); return true; }
