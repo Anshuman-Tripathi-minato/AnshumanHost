@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080909">
+  <meta name="description" content="AnshumanHost local-first deployment control panel">
+  <title>AnshumanHost · Control room</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-shell" id="appShell">
+    <header class="topbar">
+      <button class="mobile-menu icon-button" id="mobileMenu" aria-label="Open navigation" aria-expanded="false" type="button"><span class="menu-lines"></span></button>
+      <a class="brand" href="#dashboard" aria-label="AnshumanHost dashboard">
+        <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true"><path d="M40 13c-5-7-17-8-25-3C6 16 4 27 9 34c4 6 13 8 20 4 7-4 10-12 7-18-2-4-7-6-11-4-4 1-6 5-5 8 1 2 4 3 6 2 2-1 3-3 2-4"/><path d="M7 37c8-4 12-9 14-15M30 9c3-3 7-4 11-3-1 4-3 7-7 9"/></svg>
+        <span class="brand-copy"><strong>Anshuman<span>Host</span></strong><small>DEPLOY · MANAGE · BUILD · YOUR WORLD</small></span>
+      </a>
+      <label class="global-search"><span class="sr-only">Search projects</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.4 4.4"/></svg><input id="globalSearch" type="search" placeholder="Search projects…" autocomplete="off"><kbd>⌘ K</kbd></label>
+      <div class="top-actions"><button class="icon-button notification-button" id="notificationsButton" aria-label="Open deployment activity" title="Deployment activity" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button><span class="locale-button" aria-hidden="true">あ</span></div>
+    </header>
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+      <div class="sidebar-scroll">
+        <p class="nav-label">WORKSPACE</p>
+        <nav class="nav-list" id="primaryNav">
+          <a href="#dashboard" data-page="dashboard"><span class="nav-icon" data-icon="home"></span><span>Dashboard</span></a>
+          <a href="#projects" data-page="projects"><span class="nav-icon" data-icon="boxes"></span><span>Projects</span><b id="sidebarProjectCount" class="nav-count"></b></a>
+          <a href="#deploy" data-page="deploy"><span class="nav-icon" data-icon="plus"></span><span>Deploy New</span></a>
+          <a href="#domains" data-page="domains"><span class="nav-icon" data-icon="globe"></span><span>Domains</span></a>
+          <a href="#logs" data-page="logs"><span class="nav-icon" data-icon="file"></span><span>Logs</span></a>
+          <a href="#settings" data-page="settings"><span class="nav-icon" data-icon="settings"></span><span>Settings</span></a>
+        </nav>
+        <div class="nav-divider"></div>
+        <p class="nav-label">OPERATIONS</p>
+        <nav class="nav-list">
+          <a href="#system" data-page="system"><span class="nav-icon" data-icon="monitor"></span><span>System</span></a>
+          <a href="#terminal" data-page="terminal"><span class="nav-icon" data-icon="terminal"></span><span>Terminal</span></a>
+          <a href="#backups" data-page="backups"><span class="nav-icon" data-icon="database"></span><span>Backups</span></a>
+        </nav>
+      </div>
+      <div class="sidebar-foot"><span class="online-dot"></span><span>Local control plane</span><small>127.0.0.1</small></div>
+    </aside>
+    <div class="sidebar-scrim" id="sidebarScrim"></div>
+    <main id="main" class="main-content" tabindex="-1"><div class="loading-state"><span class="spinner"></span><span>Connecting to the control plane…</span></div></main>
+    <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  </div>
+</body>
+</html>

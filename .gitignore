@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.*
+data/*.json
+data/*.tmp
+logs/**
+!logs/.gitkeep
+apps/**
+!apps/.gitkeep
+backups/**
+!backups/.gitkeep
+*.pid
+npm-debug.log*
