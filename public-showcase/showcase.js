@@ -3,6 +3,12 @@
 const content = document.querySelector('#content');
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[ch]);
 document.querySelector('#year').textContent = new Date().getFullYear();
+const adminLink = document.querySelector('#adminLink');
+if (adminLink && ['127.0.0.1', 'localhost'].includes(location.hostname)) {
+  adminLink.href = `http://${location.hostname}:3000/`;
+  adminLink.hidden = false;
+  adminLink.title = 'Open the local admin panel';
+}
 
 async function getJson(url) {
   const response = await fetch(url, { headers: { accept: 'application/json' } });

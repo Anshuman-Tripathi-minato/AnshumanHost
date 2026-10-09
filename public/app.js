@@ -34,11 +34,40 @@ const paths = {
   memory: '<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 7V4m5 3V4m5 3V4M7 17v3m5-3v3m5-3v3M7 10h2v4H7zm4 0h2v4h-2zm4 0h2v4h-2z"/>',
   checkCircle: '<circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/>',
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a15.8 15.8 0 0 1-3 3.8M6.2 6.2C3.5 8.1 2 12 2 12s3.6 7 10 7a10.8 10.8 0 0 0 3.1-.5"/>',
   trash: '<path d="M3 6h18m-2 0-.9 14H5.9L5 6m4 0V4h6v2m-5 4v6m4-6v6"/>',
 };
 const icon = (name, cls = '') => `<svg${cls ? ` class="${cls}"` : ''} viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.info}</svg>`;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const state = { projects: [], overview: null, capabilities: null, deployments: [], page: 'dashboard', query: '', projectFilter: 'all', source: 'git', selectedLogProject: '', currentProject: null, backups: [], busy: false };
+
+function addPasswordVisibilityControls(root = main) {
+  root.querySelectorAll('input[type="password"]').forEach((input) => {
+    if (input.parentElement?.classList.contains('password-control')) return;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'password-control';
+    input.before(wrapper);
+    wrapper.append(input);
+    const toggle = document.createElement('button');
+    toggle.className = 'password-visibility';
+    toggle.type = 'button';
+    toggle.setAttribute('aria-label', 'Show password');
+    toggle.setAttribute('aria-controls', input.id);
+    toggle.setAttribute('aria-pressed', 'false');
+    toggle.title = 'Show password';
+    toggle.innerHTML = icon('eye');
+    toggle.addEventListener('click', () => {
+      const showPassword = input.type === 'password';
+      input.type = showPassword ? 'text' : 'password';
+      toggle.setAttribute('aria-label', showPassword ? 'Hide password' : 'Show password');
+      toggle.setAttribute('aria-pressed', String(showPassword));
+      toggle.title = showPassword ? 'Hide password' : 'Show password';
+      toggle.innerHTML = icon(showPassword ? 'eyeOff' : 'eye');
+    });
+    wrapper.append(toggle);
+  });
+}
 
 async function api(route, options = {}) {
   const response = await fetch(route, { credentials: 'same-origin', ...options, headers: { ...(options.body && !(options.body instanceof ArrayBuffer) && !(options.body instanceof Blob) ? { 'content-type': 'application/json' } : {}), ...(options.headers || {}) } });
@@ -57,6 +86,7 @@ function renderAuthGate(configured) {
     : 'Create a password for this local admin panel. Initial setup is accepted only from this device.';
   const action = configured ? 'Sign in' : 'Save password and continue';
   main.innerHTML = `<section class="auth-card"><div class="auth-brand"><svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true"><path d="M40 13c-5-7-17-8-25-3C6 16 4 27 9 34c4 6 13 8 20 4 7-4 10-12 7-18-2-4-7-6-11-4-4 1-6 5-5 8 1 2 4 3 6 2 2-1 3-3 2-4"/><path d="M7 37c8-4 12-9 14-15M30 9c3-3 7-4 11-3-1 4-3 7-7 9"/></svg><span class="brand-copy"><strong>Anshuman<span>Host</span></strong><small>PRIVATE CONTROL PLANE</small></span></div><p class="eyebrow">ADMIN ACCESS</p><h1>${title}</h1><p class="page-subtitle">${subtitle}</p><form id="authForm" data-mode="${configured ? 'login' : 'setup'}"><div class="form-field"><label for="adminPassword">${configured ? 'Admin password' : 'Create password'}</label><input class="input" id="adminPassword" name="password" type="password" minlength="14" maxlength="256" autocomplete="${configured ? 'current-password' : 'new-password'}" required autofocus></div>${configured ? '' : '<div class="form-field"><label for="confirmAdminPassword">Confirm password</label><input class="input" id="confirmAdminPassword" name="confirmPassword" type="password" minlength="14" maxlength="256" autocomplete="new-password" required><small>Use at least 14 characters.</small></div>'}<p class="auth-error" id="authError" role="alert"></p><button class="button button-primary" type="submit">${action}</button></form></section>`;
+  addPasswordVisibilityControls();
   document.querySelector('#adminPassword')?.focus();
 }
 
@@ -278,6 +308,12 @@ async function render() {
   } catch (error) {
     main.innerHTML = `<section class="panel content-panel"><div class="notice error">${icon('alert')} ${esc(error.message)}</div><button class="button" data-action="retry" style="margin-top:12px">${icon('refresh')} Retry</button></section>`;
   }
+  const baseDomainLink = main.querySelector('.detail-list a.text-button');
+  if (baseDomainLink) {
+    baseDomainLink.href = 'http://127.0.0.1:8780/';
+    baseDomainLink.title = 'Open local preview of this domain';
+  }
+  addPasswordVisibilityControls();
 }
 
 function routeFromHash() {

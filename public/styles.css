@@ -381,5 +381,11 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .auth-card .button { width: 100%; justify-content: center; }
 .auth-error { min-height: 18px; margin: -2px 0 0; color: #ff8b85; font-size: 11px; }
 .auth-card .form-field small { font-size: 10px; }
+.password-control { position: relative; }
+.password-control .input { padding-right: 47px; }
+.password-visibility { position: absolute; top: 50%; right: 5px; width: 32px; height: 32px; display: grid; place-items: center; padding: 0; transform: translateY(-50%); border: 0; border-radius: 6px; color: #92938d; background: transparent; cursor: pointer; }
+.password-visibility:hover { color: var(--amber); background: rgba(255,201,40,.08); }
+.password-visibility svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.password-visibility:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .password-form { max-width: 620px; }
 @media (max-width: 720px) { .auth-locked .main-content { padding-top: calc(var(--topbar-height) + 20px); }.auth-card { padding: 22px; }.signout-button { padding:0 8px; } }

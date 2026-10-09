@@ -5,6 +5,7 @@ const store = require('../services/store');
 const config = require('../config');
 const manager = require('../process-manager/manager');
 const fs = require('node:fs/promises');
+const { createReadStream } = require('node:fs');
 const path = require('node:path');
 
 const showcaseMime = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
@@ -87,12 +88,28 @@ async function serveDirectory(req, res) {
     'x-frame-options': 'DENY',
     'referrer-policy': 'strict-origin-when-cross-origin',
   });
-  if (req.method === 'HEAD') res.end(); else fs.createReadStream(real).pipe(res);
+  if (req.method === 'HEAD') res.end(); else {
+    const stream = createReadStream(real);
+    stream.on('error', (error) => {
+      process.stderr.write(`Public directory file read failed: ${error.message}\n`);
+      if (res.headersSent) res.destroy();
+      else res.writeHead(500).end('File unavailable.');
+    });
+    stream.pipe(res);
+  }
 }
 
 function routeHttp(req, res) {
   const host = safeHost(req.headers.host);
-  if (isDirectoryHost(host)) { serveDirectory(req, res).catch(() => { if (!res.headersSent) res.writeHead(503); res.end('Project directory is temporarily unavailable.'); }); return; }
+  if (isDirectoryHost(host)) {
+    serveDirectory(req, res).catch((error) => {
+      process.stderr.write(`Public directory request failed: ${error.message}\n`);
+      if (res.headersSent) { res.destroy(); return; }
+      res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+      res.end('Project directory is temporarily unavailable.');
+    });
+    return;
+  }
   findProject(host).then((project) => {
     if (!project) { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' }); res.end('No running project is registered for this hostname.'); return; }
     const port = manager.status(project.slug).port;
