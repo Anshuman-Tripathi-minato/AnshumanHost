@@ -17,7 +17,7 @@ module.exports = {
   showcaseRoot: path.join(root, 'public-showcase'),
   portStart: Number(process.env.ANSHUMANHOST_APP_PORT_START || 3100),
   portEnd: Number(process.env.ANSHUMANHOST_APP_PORT_END || 3999),
-  baseDomain: (process.env.ANSHUMANHOST_BASE_DOMAIN || 'anshuman.online').toLowerCase(),
+  baseDomain: (process.env.ANSHUMANHOST_BASE_DOMAIN || 'anshman.online').toLowerCase(),
   uploadLimitBytes: Number(process.env.ANSHUMANHOST_UPLOAD_LIMIT || 100 * 1024 * 1024),
   archiveLimitBytes: 200 * 1024 * 1024,
   maxArchiveFiles: 2000,

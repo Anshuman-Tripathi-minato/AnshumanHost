@@ -56,7 +56,7 @@ curl http://127.0.0.1:<assigned-port>/health
 Verify hostname routing through the local reverse proxy:
 
 ```sh
-curl -H 'Host: sample.anshuman.online' http://127.0.0.1:8780/health
+curl -H 'Host: sample.anshman.online' http://127.0.0.1:8780/health
 ```
 
 The hostname header is enough for local testing; no public DNS record is created. The dashboard's **Projects** and **Logs** pages expose real status, actions, process output, and deployment events.
@@ -84,7 +84,7 @@ The platform assigns an unused port in `3100–3999`, sets `PORT` and `HOST=127.
 
 ## Public project directory
 
-The base domain (`anshuman.online` by default) serves a public project directory through the reverse proxy. It lists only projects that are running, have an assigned subdomain, and have **List this project publicly** enabled. This setting is on by default for new projects and can be changed in each project's admin configuration. Existing projects are listed unless you switch the setting off.
+The base domain (`anshman.online` by default) serves a public project directory through the reverse proxy. It lists only projects that are running, have an assigned subdomain, and have **List this project publicly** enabled. This setting is on by default for new projects and can be changed in each project's admin configuration. Existing projects are listed unless you switch the setting off.
 
 Each card opens a detail page at `/projects/<slug>` with the project description, live subdomain, and optional YouTube overview link. Add or update the description and YouTube link from that project's **Configuration** section. Video links are validated as YouTube URLs and open on YouTube rather than being embedded.
 
@@ -93,8 +93,8 @@ The public directory intentionally returns only presentation fields. It does not
 To test the directory locally:
 
 ```sh
-curl -H 'Host: anshuman.online' http://127.0.0.1:8780/
-curl -H 'Host: anshuman.online' http://127.0.0.1:8780/directory-api/projects
+curl -H 'Host: anshman.online' http://127.0.0.1:8780/
+curl -H 'Host: anshman.online' http://127.0.0.1:8780/directory-api/projects
 ```
 
 ## Hostname routing and domains
@@ -104,7 +104,7 @@ The reverse proxy listens on `127.0.0.1:8780`, matches the HTTP `Host` header ag
 For local routing, use a command such as:
 
 ```sh
-curl -H 'Host: app.anshuman.online' http://127.0.0.1:8780/
+curl -H 'Host: app.anshman.online' http://127.0.0.1:8780/
 ```
 
 This does not change DNS. To publish the directory and subdomains, follow [FUTURE_PUBLIC_SETUP.md](FUTURE_PUBLIC_SETUP.md) after local routing works.

@@ -54,7 +54,7 @@ function websocketHandshake(host) {
 test('AnshumanHost local deployment vertical slice', async (t) => {
   await store.ensureFiles();
   const slug = `test-${process.pid}-${Date.now().toString(36)}`;
-  const hostname = `${slug}.anshuman.online`;
+  const hostname = `${slug}.anshman.online`;
   let proxy;
   let created = false;
   try {
@@ -92,7 +92,7 @@ test('AnshumanHost local deployment vertical slice', async (t) => {
       assert.match(result.body, /AnshumanHost sample app/);
       const unknown = await proxyRequest('unregistered.invalid');
       assert.equal(unknown.status, 404);
-      assert.equal(safeHost('project.anshuman.online:8780'), 'project.anshuman.online');
+      assert.equal(safeHost('project.anshman.online:8780'), 'project.anshman.online');
       assert.equal(safeHost('host/attack'), '');
     });
 
