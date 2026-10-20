@@ -96,10 +96,10 @@ class ProcessManager {
     const proc = spawn(args[0], args[1], { cwd, env, shell: false, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     const item = { child: proc, port, pid: proc.pid, startedAt: new Date().toISOString(), exited: false, expectedStop: false };
     this.children.set(project.slug, item);
-    await this.writeLog(project.slug, `Process starting: ${args[0]} ${args[1].join(' ')} on 127.0.0.1:${port}`, allSecrets);
     const capture = (stream) => stream.on('data', (chunk) => this.writeLog(project.slug, chunk.toString(), allSecrets));
     capture(proc.stdout); capture(proc.stderr);
-    proc.on('error', (error) => { this.reservedPorts.delete(port); this.writeLog(project.slug, `Process error: ${error.message}`, allSecrets); });
+    // A spawn failure (for example a missing executable) emits 'error' and 'close' but never 'exit'.
+    proc.on('error', (error) => { if (!proc.pid) item.exited = true; this.reservedPorts.delete(port); this.writeLog(project.slug, `Process error: ${error.message}`, allSecrets); });
     proc.on('exit', (code, signal) => {
       item.exited = true;
       this.reservedPorts.delete(port);
@@ -118,6 +118,8 @@ class ProcessManager {
         return data;
       }).catch(() => {});
     });
+    // Listeners are attached before any await so spawn errors are never emitted unhandled.
+    await this.writeLog(project.slug, `Process starting: ${args[0]} ${args[1].join(' ')} on 127.0.0.1:${port}`, allSecrets);
     await wait(200);
     if (item.exited) throw new Error('Application process exited during startup. Check its logs.');
     return { process: item, port };

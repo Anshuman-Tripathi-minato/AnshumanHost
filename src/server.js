@@ -43,6 +43,17 @@ async function bodyOf(req, limit = 2 * 1024 * 1024) {
   return buffer;
 }
 
+// Rejects DNS-rebinding requests: a hostile page that rebinds its own domain to 127.0.0.1 still sends its own Host header.
+function allowedHosts() {
+  const hosts = new Set([`127.0.0.1:${config.port}`, `localhost:${config.port}`, `[::1]:${config.port}`, `${config.host}:${config.port}`]);
+  for (const extra of String(process.env.ANSHUMANHOST_ALLOWED_HOSTS || '').split(',')) if (extra.trim()) hosts.add(extra.trim().toLowerCase());
+  return hosts;
+}
+
+function isAllowedHost(req) {
+  return allowedHosts().has(String(req.headers.host || '').toLowerCase());
+}
+
 function checkBrowserRequest(req) {
   if (req.headers['sec-fetch-site'] === 'cross-site') fail('Cross-site dashboard requests are blocked.', 403);
   const origin = req.headers.origin;
@@ -63,8 +74,10 @@ async function publicProjects() {
 }
 
 async function dispatch(req, res) {
-  const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
-  const pathname = decodeURIComponent(url.pathname);
+  if (!isAllowedHost(req)) fail('Unrecognized dashboard host. Open the dashboard at 127.0.0.1 or localhost, or add the host to ANSHUMANHOST_ALLOWED_HOSTS.', 421);
+  const url = new URL(req.url, 'http://127.0.0.1');
+  let pathname;
+  try { pathname = decodeURIComponent(url.pathname); } catch { fail('Request path is malformed.', 400); }
   if (!pathname.startsWith('/api/')) return false;
   if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) checkBrowserRequest(req);
   if (req.method === 'OPTIONS') { res.writeHead(204, { allow: 'GET,HEAD,POST,PUT,DELETE,OPTIONS' }); res.end(); return true; }
@@ -78,7 +91,7 @@ async function dispatch(req, res) {
     if (!auth.isLoopback(req)) fail('Initial administrator setup is available only from this device.', 403);
     if (await auth.readRecord()) fail('Administrator password is already configured.', 409);
     const body = await bodyOf(req);
-    const record = await auth.setPassword(body.password);
+    const record = await auth.setPassword(body.password, null, { exclusive: true });
     auth.setSession(req, res, record);
     sendJson(res, 201, { authenticated: true });
     return true;
@@ -88,16 +101,15 @@ async function dispatch(req, res) {
     if (!record) fail('Set the administrator password on the host device first.', 409);
     if (!auth.allowAttempt(req)) fail('Too many sign-in attempts. Wait 15 minutes, then try again.', 429);
     const body = await bodyOf(req);
-    if (!await auth.verifyPassword(body.password, record)) {
-      auth.failedAttempt(req);
-      fail('Password is incorrect.', 401);
-    }
+    if (!await auth.verifyPassword(body.password, record)) fail('Password is incorrect.', 401);
     auth.clearAttempts(req);
     auth.setSession(req, res, record);
     sendJson(res, 200, { authenticated: true });
     return true;
   }
   if (pathname === '/api/auth/logout' && req.method === 'POST') {
+    const record = await auth.readRecord();
+    if (record && auth.isAuthenticated(req, record)) await auth.revokeSessions(record);
     auth.clearSession(req, res);
     sendJson(res, 200, { authenticated: false });
     return true;
@@ -215,7 +227,7 @@ async function dispatch(req, res) {
 async function serveStatic(req, res) {
   let pathname;
   try { pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); } catch { res.writeHead(400).end('Bad request'); return; }
-  let relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+  const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
   const target = path.resolve(config.publicRoot, relative);
   const root = await fs.realpath(config.publicRoot);
   if (target !== root && !target.startsWith(`${root}${path.sep}`)) { res.writeHead(403).end('Forbidden'); return; }
@@ -278,4 +290,4 @@ async function main() {
 
 if (require.main === module) main().catch((error) => { process.stderr.write(`AnshumanHost could not start: ${error.message}\n`); process.exitCode = 1; });
 
-module.exports = { dispatch, publicProjects, checkBrowserRequest, main };
+module.exports = { dispatch, publicProjects, checkBrowserRequest, isAllowedHost, main };

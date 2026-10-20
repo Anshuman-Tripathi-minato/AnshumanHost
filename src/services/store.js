@@ -2,6 +2,7 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const config = require('../config');
 
 const storePath = path.join(config.dataRoot, 'store.json');
@@ -15,7 +16,7 @@ async function ensureFiles() {
 }
 
 async function atomicWrite(file, value) {
-  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  const temp = `${file}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   await fs.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   await fs.rename(temp, file);
   try { await fs.chmod(file, 0o600); } catch { /* permissions vary on Android filesystems */ }
@@ -48,9 +49,22 @@ async function writeSecrets(value) {
   await atomicWrite(secretsPath, value);
 }
 
+// Serialized like update() so concurrent edits cannot drop each other's environment values.
+let secretsQueue = Promise.resolve();
+async function updateSecrets(mutator) {
+  const run = secretsQueue.then(async () => {
+    const secrets = await readSecrets();
+    const next = await mutator(secrets) || secrets;
+    await atomicWrite(secretsPath, next);
+    return next;
+  });
+  secretsQueue = run.catch(() => {});
+  return run;
+}
+
 function publicProject(project) {
   const { env = {}, ...safe } = project;
   return { ...safe, env: Object.keys(env) };
 }
 
-module.exports = { ensureFiles, read, update, readSecrets, writeSecrets, publicProject, storePath, secretsPath };
+module.exports = { ensureFiles, read, update, readSecrets, writeSecrets, updateSecrets, publicProject, storePath, secretsPath };

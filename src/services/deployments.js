@@ -8,12 +8,35 @@ const config = require('../config');
 const store = require('./store');
 const capabilities = require('./capabilities');
 const manager = require('../process-manager/manager');
-const { validateSlug, validateName, validateHostname, validateGitUrl, safeAppPath, safeEnv, validateHealthPath, validateDescription, validateYoutubeUrl, parseCommand, fail } = require('../security/validation');
+const { validateSlug, validateName, validateHostname, validateGitUrl, safeAppPath, safeEnv, validateHealthPath, validateRuntime, validateFramework, validateDescription, validateYoutubeUrl, parseCommand, fail } = require('../security/validation');
 const { extractZip } = require('../security/zip');
 
 const activeDeployments = new Set();
 function conflict(message) { const error = new Error(message); error.status = 409; throw error; }
 function isDeploying(slug) { return activeDeployments.has(slug); }
+
+// One deployment or source import at a time per project.
+async function withLock(slug, task) {
+  if (activeDeployments.has(slug)) conflict('Another deployment or import is already in progress for this project.');
+  activeDeployments.add(slug);
+  try { return await task(); }
+  finally { activeDeployments.delete(slug); }
+}
+
+// Builds new source in a staging folder and swaps it in only on success, so a failed import keeps the old source.
+async function replaceSource(slug, populate) {
+  const target = safeAppPath(slug);
+  const staging = path.join(config.appRoot, `.import-${slug}-${crypto.randomBytes(6).toString('hex')}`);
+  await fs.mkdir(config.appRoot, { recursive: true, mode: 0o700 });
+  try {
+    const result = await populate(staging);
+    await fs.rm(target, { recursive: true, force: true });
+    await fs.rename(staging, target);
+    return result;
+  } finally {
+    await fs.rm(staging, { recursive: true, force: true });
+  }
+}
 
 function detect(sourcePath) {
   let pkg = {};
@@ -37,7 +60,7 @@ async function createProject(input = {}) {
   const slug = validateSlug(input.slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''));
   const hostname = validateHostname(input.hostname || `${slug}.${config.baseDomain}`);
   const appPath = safeAppPath(slug);
-  const autodetected = input.runtime ? { runtime: input.runtime, framework: input.framework || input.runtime, buildCommand: '', startCommand: '' } : detect(appPath);
+  const autodetected = input.runtime ? { runtime: validateRuntime(input.runtime), framework: input.framework || input.runtime, buildCommand: '', startCommand: '' } : detect(appPath);
   const project = {
     id: `${slug}-${Date.now().toString(36)}`,
     slug, name, hostname,
@@ -45,7 +68,7 @@ async function createProject(input = {}) {
     youtubeUrl: validateYoutubeUrl(input.youtubeUrl),
     isPublic: input.isPublic !== false && input.isPublic !== 'false',
     runtime: autodetected.runtime,
-    framework: input.framework || autodetected.framework,
+    framework: validateFramework(input.framework || autodetected.framework),
     buildCommand: input.buildCommand === undefined ? autodetected.buildCommand : String(input.buildCommand),
     startCommand: input.startCommand === undefined ? autodetected.startCommand : String(input.startCommand),
     healthPath: validateHealthPath(input.healthPath || '/'),
@@ -91,76 +114,78 @@ async function updateProject(slug, input = {}) {
     description: input.description === undefined ? (current.description || '') : validateDescription(input.description),
     youtubeUrl: input.youtubeUrl === undefined ? (current.youtubeUrl || '') : validateYoutubeUrl(input.youtubeUrl),
     isPublic: input.isPublic === undefined ? current.isPublic !== false : input.isPublic === true || input.isPublic === 'true' || input.isPublic === 'on',
-    runtime: input.runtime === undefined ? current.runtime : String(input.runtime),
-    framework: input.framework === undefined ? current.framework : String(input.framework),
+    runtime: input.runtime === undefined ? current.runtime : validateRuntime(input.runtime),
+    framework: input.framework === undefined ? current.framework : validateFramework(input.framework),
     buildCommand: input.buildCommand === undefined ? current.buildCommand : String(input.buildCommand),
     startCommand: input.startCommand === undefined ? current.startCommand : String(input.startCommand),
     healthPath: input.healthPath === undefined ? current.healthPath : validateHealthPath(input.healthPath),
     updatedAt: new Date().toISOString(),
   };
   parseCommand(next.buildCommand); parseCommand(next.startCommand);
-  const secrets = await store.readSecrets();
-  if (input.env !== undefined) secrets[slug] = safeEnv(input.env);
-  next.envKeys = Object.keys(secrets[slug] || {});
+  const env = input.env === undefined ? null : safeEnv(input.env);
+  next.envKeys = env ? Object.keys(env) : Object.keys((await store.readSecrets())[slug] || {});
   await store.update((data) => {
     if (newHost && data.projects.some((p) => p.slug !== slug && p.hostname === newHost)) conflict(`Hostname "${newHost}" is already assigned.`);
     data.projects = data.projects.map((p) => p.slug === slug ? next : p); return data;
   });
-  if (input.env !== undefined) await store.writeSecrets(secrets);
+  if (env) await store.updateSecrets((secrets) => { secrets[slug] = env; return secrets; });
   return next;
 }
 
 async function ensureSourceCanChange(slug) {
   const project = await projectBySlug(slug);
-  if (isDeploying(slug) || project.status === 'deploying') conflict('Wait for the current deployment to finish before replacing its source.');
+  if (project.status === 'deploying') conflict('Wait for the current deployment to finish before replacing its source.');
   if (project.status === 'unknown' && !manager.status(slug).running) conflict('Review the previous process state before replacing project source.');
   if (manager.status(slug).running) conflict('Stop the running project before replacing its source.');
 }
 
 async function importGit(slug, repositoryUrl) {
-  await ensureSourceCanChange(slug);
   const url = validateGitUrl(repositoryUrl);
-  const target = safeAppPath(slug);
-  await fs.rm(target, { recursive: true, force: true });
-  await fs.mkdir(path.dirname(target), { recursive: true });
-  await manager.writeLog(slug, `Cloning ${new URL(url).hostname}/${new URL(url).pathname.replace(/^\//, '')}`);
-  await new Promise((resolve, reject) => {
-    const proc = spawn('git', ['clone', '--depth', '1', '--', url, target], { cwd: config.root, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
-    proc.stdout.on('data', (chunk) => manager.writeLog(slug, chunk.toString()));
-    proc.stderr.on('data', (chunk) => manager.writeLog(slug, chunk.toString()));
-    proc.on('error', (error) => reject(new Error(`Could not run git clone: ${error.message}`)));
-    proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Git clone failed with exit code ${code}.`)));
+  return withLock(slug, async () => {
+    await ensureSourceCanChange(slug);
+    const target = safeAppPath(slug);
+    await manager.writeLog(slug, `Cloning ${new URL(url).hostname}/${new URL(url).pathname.replace(/^\//, '')}`);
+    await replaceSource(slug, (staging) => new Promise((resolve, reject) => {
+      // GIT_TERMINAL_PROMPT=0 makes private or missing repositories fail fast instead of waiting for credentials.
+      const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '' };
+      const proc = spawn('git', ['-c', 'credential.helper=', 'clone', '--depth', '1', '--', url, staging], { cwd: config.root, env, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+      const timer = setTimeout(() => proc.kill('SIGKILL'), 10 * 60 * 1000);
+      proc.stdout.on('data', (chunk) => manager.writeLog(slug, chunk.toString()));
+      proc.stderr.on('data', (chunk) => manager.writeLog(slug, chunk.toString()));
+      proc.on('error', (error) => { clearTimeout(timer); reject(new Error(`Could not run git clone: ${error.message}`)); });
+      proc.on('close', (code, signal) => { clearTimeout(timer); if (code === 0) resolve(); else reject(new Error(signal ? 'Git clone timed out.' : `Git clone failed with exit code ${code}. Check that the repository is public and reachable.`)); });
+    }));
+    const detected = detect(target);
+    await store.update((data) => {
+      const project = data.projects.find((p) => p.slug === slug);
+      if (project) Object.assign(project, detected, { sourcePath: path.relative(config.root, target), updatedAt: new Date().toISOString() });
+      return data;
+    });
+    return detected;
   });
-  const detected = detect(target);
-  await store.update((data) => {
-    const project = data.projects.find((p) => p.slug === slug);
-    if (project) Object.assign(project, detected, { sourcePath: path.relative(config.root, target), updatedAt: new Date().toISOString() });
-    return data;
-  });
-  return detected;
 }
 
 async function importLocal(slug, directory) {
-  await ensureSourceCanChange(slug);
   const from = safeAppPath(directory);
   const to = safeAppPath(slug);
-  const stat = await fs.stat(from).catch(() => null);
-  if (!stat || !stat.isDirectory()) { const error = new Error(`No existing project directory was found at apps/${directory}.`); error.status = 404; throw error; }
-  if (from === to) return detect(to);
-  await fs.rm(to, { recursive: true, force: true });
-  await fs.cp(from, to, { recursive: true, dereference: false, filter: (source) => !source.split(path.sep).includes('.git') });
-  const detected = detect(to);
-  await store.update((data) => { const project = data.projects.find((p) => p.slug === slug); if (project) Object.assign(project, detected, { sourcePath: path.relative(config.root, to) }); return data; });
-  return detected;
+  return withLock(slug, async () => {
+    await ensureSourceCanChange(slug);
+    const stat = await fs.stat(from).catch(() => null);
+    if (!stat || !stat.isDirectory()) { const error = new Error(`No existing project directory was found at apps/${directory}.`); error.status = 404; throw error; }
+    if (from === to) return detect(to);
+    await replaceSource(slug, (staging) => fs.cp(from, staging, { recursive: true, dereference: false, filter: (source) => !source.split(path.sep).includes('.git') }));
+    const detected = detect(to);
+    await store.update((data) => { const project = data.projects.find((p) => p.slug === slug); if (project) Object.assign(project, detected, { sourcePath: path.relative(config.root, to) }); return data; });
+    return detected;
+  });
 }
 
 async function importSample(slug) {
-  await ensureSourceCanChange(slug);
-  const from = path.join(config.root, 'examples', 'sample-node');
-  const to = safeAppPath(slug);
-  await fs.rm(to, { recursive: true, force: true });
-  await fs.cp(from, to, { recursive: true });
-  return { runtime: 'node', framework: 'Node.js', buildCommand: '', startCommand: 'node index.js' };
+  return withLock(slug, async () => {
+    await ensureSourceCanChange(slug);
+    await replaceSource(slug, (staging) => fs.cp(path.join(config.root, 'examples', 'sample-node'), staging, { recursive: true }));
+    return { runtime: 'node', framework: 'Node.js', buildCommand: '', startCommand: 'node index.js' };
+  });
 }
 
 async function deploymentEvent(slug, values) {
@@ -236,15 +261,16 @@ async function performDeployment(slug) {
 
 async function deploy(slug) {
   validateSlug(slug);
-  if (activeDeployments.has(slug)) conflict('A deployment is already in progress for this project.');
-  activeDeployments.add(slug);
-  try { return await performDeployment(slug); }
-  finally { activeDeployments.delete(slug); }
+  return withLock(slug, () => performDeployment(slug));
 }
 
 async function extractProjectZip(buffer, slug) {
-  await ensureSourceCanChange(slug);
-  return extractZip(buffer, slug);
+  validateSlug(slug);
+  return withLock(slug, async () => {
+    await ensureSourceCanChange(slug);
+    const result = await replaceSource(slug, (staging) => extractZip(buffer, staging));
+    return { ...result, destination: safeAppPath(slug) };
+  });
 }
 
 async function logs(slug, limit = 250) {
@@ -260,7 +286,7 @@ async function removeProject(slug) {
   if (project.status === 'unknown' && !manager.status(slug).running) conflict('Review the host process list and confirm the project is stopped before deleting it.');
   await manager.stop(slug);
   await store.update((data) => { data.projects = data.projects.filter((p) => p.slug !== slug); data.deployments = data.deployments.filter((d) => d.projectSlug !== slug); return data; });
-  const secrets = await store.readSecrets(); delete secrets[slug]; await store.writeSecrets(secrets);
+  await store.updateSecrets((secrets) => { delete secrets[slug]; return secrets; });
   await fs.rm(safeAppPath(slug), { recursive: true, force: true });
   await fs.rm(path.join(config.logRoot, `${slug}.log`), { force: true });
   return project;
@@ -283,11 +309,11 @@ async function createBackup() {
   const hasSecrets = Boolean(Object.values(secrets).some((values) => Object.keys(values || {}).length));
   const manifest = { createdAt: new Date().toISOString(), projectCount: data.projects.length, includesSecrets: hasSecrets, ...(hasSecrets ? { warning: 'Keep this backup private; project credentials are included.' } : {}) };
   await fs.writeFile(path.join(target, 'manifest.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
-  return { id, path: path.relative(config.root, target), projectCount: data.projects.length, includesSecrets: Boolean(Object.keys(secrets).length) };
+  return { id, path: path.relative(config.root, target), projectCount: data.projects.length, includesSecrets: hasSecrets };
 }
 
 async function listBackups() {
-  const names = await fs.readdir(config.backupRoot).catch(() => []);
+  const names = (await fs.readdir(config.backupRoot).catch(() => [])).filter((name) => !name.startsWith('.'));
   return Promise.all(names.map(async (id) => {
     const manifest = await fs.readFile(path.join(config.backupRoot, id, 'manifest.json'), 'utf8').then(JSON.parse).catch(() => null);
     return { id, ...(manifest || {}) };

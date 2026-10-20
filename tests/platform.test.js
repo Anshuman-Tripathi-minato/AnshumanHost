@@ -10,7 +10,11 @@ const config = require('../src/config');
 const store = require('../src/services/store');
 const service = require('../src/services/deployments');
 const manager = require('../src/process-manager/manager');
-const { parseCommand, validateSlug } = require('../src/security/validation');
+const os = require('node:os');
+const { spawn } = require('node:child_process');
+const { parseCommand, validateSlug, validateHealthPath, validateRuntime } = require('../src/security/validation');
+const auth = require('../src/services/auth');
+const { dispatch, isAllowedHost } = require('../src/server');
 const { createProxyServer, safeHost } = require('../src/reverse-proxy/server');
 const { discover } = require('../src/services/capabilities');
 
@@ -108,6 +112,9 @@ test('AnshumanHost local deployment vertical slice', async (t) => {
       const archive = makeZip('../escape.txt');
       await assert.rejects(service.extractZip(archive, slug), /unsafe path/i);
       await assert.rejects(service.extractZip(Buffer.from('not a zip'), slug), /empty|invalid/i);
+      await fs.access(path.join(config.appRoot, slug, 'index.js'));
+      const leftovers = (await fs.readdir(config.appRoot)).filter((name) => name.startsWith(`.import-${slug}-`));
+      assert.deepEqual(leftovers, []);
     });
 
     await t.test('metadata persists and restart recovery marks stale process state unknown', async () => {
@@ -136,6 +143,9 @@ test('AnshumanHost local deployment vertical slice', async (t) => {
       await assert.rejects(service.updateProject(slug, { startCommand: 'node index.js; echo unsafe' }), /shell operators/i);
       const afterFailure = await service.projectBySlug(slug);
       assert.equal(afterFailure.status, 'failed');
+      await service.updateProject(slug, { startCommand: 'anshumanhost-missing-binary-xyz' });
+      await assert.rejects(service.deploy(slug), /exited during startup/i);
+      assert.equal(manager.status(slug).running, false);
       await service.updateProject(slug, { startCommand: 'node index.js' });
     });
 
@@ -154,4 +164,46 @@ test('AnshumanHost local deployment vertical slice', async (t) => {
       await fs.rm(path.join(config.logRoot, `${slug}.log`), { force: true });
     });
   }
+});
+
+test('dashboard rejects DNS-rebinding hosts and malformed paths', async () => {
+  assert.equal(isAllowedHost({ headers: { host: `127.0.0.1:${config.port}` } }), true);
+  assert.equal(isAllowedHost({ headers: { host: `localhost:${config.port}` } }), true);
+  assert.equal(isAllowedHost({ headers: { host: `attacker.example:${config.port}` } }), false);
+  await assert.rejects(dispatch({ method: 'GET', url: '/api/auth/session', headers: { host: `attacker.example:${config.port}` } }, {}), (error) => error.status === 421);
+  await assert.rejects(dispatch({ method: 'GET', url: '/api/%E0%A4%A', headers: { host: `127.0.0.1:${config.port}` } }, {}), (error) => error.status === 400);
+});
+
+test('login rate limit counts attempts before the password check', () => {
+  const req = { socket: { remoteAddress: `rate-limit-test-${process.pid}` } };
+  for (let i = 0; i < 8; i += 1) assert.equal(auth.allowAttempt(req), true);
+  assert.equal(auth.allowAttempt(req), false);
+  auth.clearAttempts(req);
+  assert.equal(auth.allowAttempt(req), true);
+  auth.clearAttempts(req);
+});
+
+test('health paths and runtimes are validated', () => {
+  assert.equal(validateHealthPath('/health'), '/health');
+  assert.throws(() => validateHealthPath('/has space'));
+  assert.equal(validateRuntime('node'), 'node');
+  assert.throws(() => validateRuntime('cobol'));
+});
+
+test('static adapter never serves hidden files', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'anshumanhost-static-'));
+  await fs.writeFile(path.join(root, 'index.html'), '<h1>home</h1>');
+  await fs.writeFile(path.join(root, '.env'), 'SECRET=1');
+  await fs.mkdir(path.join(root, '.git'));
+  await fs.writeFile(path.join(root, '.git', 'config'), '[core]');
+  const port = await new Promise((resolve) => { const probe = net.createServer().listen(0, '127.0.0.1', () => { const { port: free } = probe.address(); probe.close(() => resolve(free)); }); });
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'services', 'static-app.js'), root], { env: { ...process.env, PORT: String(port) }, stdio: 'ignore' });
+  t.after(async () => { child.kill(); await fs.rm(root, { recursive: true, force: true }); });
+  const get = (route) => new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port, path: route }, (response) => { const chunks = []; response.on('data', (c) => chunks.push(c)); response.on('end', () => resolve({ status: response.statusCode, body: Buffer.concat(chunks).toString() })); }).on('error', reject));
+  let home;
+  for (let i = 0; i < 40 && !home; i += 1) home = await get('/').catch(() => new Promise((resolve) => setTimeout(() => resolve(null), 50)));
+  assert.equal(home.status, 200);
+  assert.equal((await get('/.env')).status, 404);
+  assert.equal((await get('/.git/config')).status, 404);
+  assert.equal((await get('/%2egit/config')).status, 404);
 });

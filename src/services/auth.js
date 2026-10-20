@@ -17,11 +17,18 @@ async function readRecord() {
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
 
-async function writeRecord(record) {
+async function writeRecord(record, { exclusive = false } = {}) {
   await fs.mkdir(config.dataRoot, { recursive: true, mode: 0o700 });
-  const temp = `${authPath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(temp, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
-  await fs.rename(temp, authPath);
+  const text = `${JSON.stringify(record, null, 2)}\n`;
+  if (exclusive) {
+    // First-time setup must never overwrite a password created by a concurrent request.
+    try { await fs.writeFile(authPath, text, { mode: 0o600, flag: 'wx' }); }
+    catch (error) { if (error.code !== 'EEXIST') throw error; const conflict = new Error('Administrator password is already configured.'); conflict.status = 409; throw conflict; }
+  } else {
+    const temp = `${authPath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+    await fs.writeFile(temp, text, { mode: 0o600 });
+    await fs.rename(temp, authPath);
+  }
   try { await fs.chmod(authPath, 0o600); } catch { /* Some Android filesystems do not support Unix modes. */ }
 }
 
@@ -75,20 +82,19 @@ function isAuthenticated(req, record) {
   catch { return false; }
 }
 
+const attemptWindowMs = 15 * 60 * 1000;
+const maxAttempts = 8;
+
+// Counts the attempt before the slow password check so parallel requests cannot all slip under the limit.
 function allowAttempt(req) {
   const key = req.socket.remoteAddress || 'unknown';
   const now = Date.now();
+  for (const [address, item] of attempts) if (now - item.startedAt > attemptWindowMs) attempts.delete(address);
   const item = attempts.get(key);
-  if (!item || now - item.startedAt > 15 * 60 * 1000) { attempts.set(key, { startedAt: now, count: 0 }); return true; }
-  return item.count < 8;
-}
-
-function failedAttempt(req) {
-  const key = req.socket.remoteAddress || 'unknown';
-  const now = Date.now();
-  const item = attempts.get(key);
-  if (!item || now - item.startedAt > 15 * 60 * 1000) attempts.set(key, { startedAt: now, count: 1 });
-  else item.count += 1;
+  if (!item) { attempts.set(key, { startedAt: now, count: 1 }); return true; }
+  if (item.count >= maxAttempts) return false;
+  item.count += 1;
+  return true;
 }
 
 function clearAttempts(req) { attempts.delete(req.socket.remoteAddress || 'unknown'); }
@@ -100,15 +106,22 @@ function isLoopback(req) {
 function setSession(req, res, record) { issueCookie(record, req, res); }
 function clearSession(req, res) { res.setHeader('set-cookie', cookieHeader('', req, 0)); }
 
-async function setPassword(password, existingRecord = null) {
+async function setPassword(password, existingRecord = null, options = {}) {
   if (!validPassword(password)) {
     const error = new Error('Use a password with at least 14 characters and no control characters.');
     error.status = 400;
     throw error;
   }
   const record = await passwordRecord(password, existingRecord?.sessionKey);
-  await writeRecord(record);
+  await writeRecord(record, options);
   return record;
 }
 
-module.exports = { readRecord, validPassword, verifyPassword, isAuthenticated, allowAttempt, failedAttempt, clearAttempts, isLoopback, setSession, clearSession, setPassword };
+// Rotating the signing key invalidates every issued session cookie.
+async function revokeSessions(record) {
+  const next = { ...record, sessionKey: crypto.randomBytes(32).toString('base64url'), updatedAt: new Date().toISOString() };
+  await writeRecord(next);
+  return next;
+}
+
+module.exports = { readRecord, validPassword, verifyPassword, isAuthenticated, allowAttempt, clearAttempts, isLoopback, setSession, clearSession, setPassword, revokeSessions };

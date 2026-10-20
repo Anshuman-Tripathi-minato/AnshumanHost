@@ -82,8 +82,22 @@ function safeEnv(input) {
 
 function validateHealthPath(value) {
   const route = String(value || '/').trim();
-  if (!route.startsWith('/') || route.startsWith('//') || /[\r\n]/.test(route)) fail('Health check path must be a local path beginning with /.');
+  if (!route.startsWith('/') || route.startsWith('//') || route.length > 512 || /[\s\u0000-\u001f\u007f]/.test(route)) fail('Health check path must be a local path beginning with / and cannot contain spaces or control characters.');
   return route;
+}
+
+const runtimes = ['node', 'static', 'python', 'docker', 'compose'];
+
+function validateRuntime(value) {
+  const runtime = String(value || '').trim().toLowerCase();
+  if (!runtimes.includes(runtime)) fail(`Runtime must be one of: ${runtimes.join(', ')}.`);
+  return runtime;
+}
+
+function validateFramework(value) {
+  const framework = String(value || '').trim();
+  if (framework.length > 80 || /[\u0000-\u001f\u007f]/.test(framework)) fail('Framework must be under 80 characters and cannot contain control characters.');
+  return framework;
 }
 
 function validateDescription(value) {
@@ -107,4 +121,4 @@ function validateYoutubeUrl(value) {
   return `https://www.youtube.com/watch?v=${id}`;
 }
 
-module.exports = { fail, slugify, validateSlug, validateName, validateHostname, validateGitUrl, parseCommand, safeAppPath, safeEnv, validateHealthPath, validateDescription, validateYoutubeUrl };
+module.exports = { fail, slugify, validateSlug, validateName, validateHostname, validateGitUrl, parseCommand, safeAppPath, safeEnv, validateHealthPath, validateRuntime, validateFramework, validateDescription, validateYoutubeUrl };

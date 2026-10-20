@@ -70,12 +70,14 @@ The **Deploy New Project** form supports:
 - **Existing local folder:** copies a validated folder from `apps/<folder>`; unrestricted paths are never accepted.
 - **No source yet:** creates a metadata record so you can configure and import later.
 
+Imports are staged in a temporary folder and replace the current source only after they succeed, so a failed clone or rejected ZIP leaves the previous source untouched. Git imports never prompt for credentials; private repositories fail with a clear error.
+
 After import, review the detected runtime and configuration. Native adapters currently deploy:
 
 | Runtime | Current behavior |
 | --- | --- |
 | Node.js | Runs a configured start command, `package.json` `scripts.start`, or a detected entry file. If `package.json` exists and `node_modules/` does not, it runs `npm install`. |
-| Static website | Runs a configured build command, then serves `dist/`, `build/`, `public/`, or the project root with a lightweight static server. |
+| Static website | Runs a configured build command, then serves `dist/`, `build/`, `public/`, or the project root with a lightweight static server. Hidden files and folders (such as `.git/` and `.env`) and `node_modules/` are never served. |
 | Python | Capability is discovered if Python 3 is present. If `requirements.txt` exists, the platform creates a project-local virtual environment and installs its requirements when the file changes. It then starts the configured command or `python3 app.py`. |
 
 Custom build and start commands are tokenized into an executable and arguments and launched with `shell: false`. Shell operators and expansions are rejected. They still run trusted project code as your current user.
@@ -125,7 +127,7 @@ Project deletion removes its source folder, logs, metadata, and environment valu
 
 On a clean dashboard shutdown, managed children receive `SIGTERM` and then `SIGKILL` after a short grace period. If the dashboard is restarted without a clean shutdown, project state becomes **Unknown**. The platform will not signal a persisted PID because it cannot prove that PID still belongs to the old project. Review the host process list, then use **Confirm stopped** before redeploying.
 
-Dashboard and proxy listeners are loopback-only by default. The admin panel requires a password, stores a salted scrypt hash in ignored `data/admin-auth.json`, uses an HttpOnly SameSite session cookie, checks same-origin write requests, and temporarily rate-limits failed logins. Initial password setup is accepted only over loopback. Do not change the bind address or expose port 3000 publicly. Imported repositories and images are executable code; process separation under one OS user is not isolation.
+Dashboard and proxy listeners are loopback-only by default. The admin panel requires a password, stores a salted scrypt hash in ignored `data/admin-auth.json`, uses an HttpOnly SameSite session cookie, checks same-origin write requests, and temporarily rate-limits failed logins. Initial password setup is accepted only over loopback. The dashboard only answers requests whose `Host` header is `127.0.0.1`, `localhost`, or `[::1]` on its port, which blocks DNS-rebinding attacks from other websites; add extra `host:port` values to `ANSHUMANHOST_ALLOWED_HOSTS` (comma-separated) only if you deliberately use another local name. Signing out revokes every issued session. Do not change the bind address or expose port 3000 publicly. Imported repositories and images are executable code; process separation under one OS user is not isolation.
 
 The router serves the public directory at the base domain and publishes registered application hostnames; it never routes the dashboard API. This does not stop trusted application code from reading other files available to the same OS user. Only deploy source you trust.
 

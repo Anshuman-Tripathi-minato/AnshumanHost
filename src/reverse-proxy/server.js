@@ -120,6 +120,7 @@ function routeHttp(req, res) {
       response.pipe(res);
     });
     upstream.on('error', () => { if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' }); res.end('Project upstream is unavailable.'); });
+    res.on('close', () => { if (!res.writableFinished) upstream.destroy(); });
     req.pipe(upstream);
   }).catch(() => { if (!res.headersSent) res.writeHead(503); res.end('Project routing is temporarily unavailable.'); });
 }
@@ -127,12 +128,16 @@ function routeHttp(req, res) {
 function createProxyServer() {
   const server = http.createServer(routeHttp);
   server.on('upgrade', async (req, client, head) => {
+    // Upgraded sockets have no default error listener; a client reset would otherwise crash the process.
+    client.on('error', () => client.destroy());
     const host = safeHost(req.headers.host);
     if (isDirectoryHost(host)) { client.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'); client.destroy(); return; }
     const project = await findProject(host).catch(() => null);
     if (!project) { client.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n'); client.destroy(); return; }
     const port = manager.status(project.slug).port;
+    if (client.destroyed) return;
     const upstream = http.request({ host: '127.0.0.1', port, method: req.method, path: req.url, headers: { ...req.headers, host: req.headers.host, 'x-forwarded-host': req.headers.host, 'x-forwarded-proto': 'http', 'x-forwarded-for': client.remoteAddress || '' } });
+    client.on('close', () => upstream.destroy());
     upstream.on('upgrade', (response, socket, upstreamHead) => {
       const lines = [`HTTP/1.1 ${response.statusCode || 101} ${response.statusMessage || 'Switching Protocols'}`];
       for (const [key, value] of Object.entries(response.headers)) lines.push(`${key}: ${Array.isArray(value) ? value.join(', ') : value}`);
